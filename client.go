@@ -31,9 +31,9 @@ import (
 )
 
 const (
-	queryPath      = "/api/query"
-	queryRangePath = "/api/query_range"
-	metricsPath    = "/api/metrics"
+	queryPath      = "/api/v1/query"
+	queryRangePath = "/api/v1/query_range"
+	metricsPath    = "/api/v1/metrics"
 
 	scalarType = "scalar"
 	vectorType = "vector"
@@ -54,6 +54,7 @@ func transport(netw, addr string, timeout time.Duration) (connection net.Conn, e
 	if err == nil {
 		connection.SetDeadline(deadline)
 	}
+
 	return
 }
 
@@ -102,6 +103,7 @@ func (c *Client) Query(expr string) (QueryResponse, error) {
 	}
 
 	var typedResp QueryResponse
+
 	switch r.Type {
 	case errorType:
 		return nil, fmt.Errorf("query error: %s", r.Value.(string))
@@ -118,6 +120,7 @@ func (c *Client) Query(expr string) (QueryResponse, error) {
 	if err := json.Unmarshal(buf, typedResp); err != nil {
 		return nil, err
 	}
+
 	return typedResp, err
 }
 
@@ -141,6 +144,7 @@ func (c *Client) QueryRange(expr string, end float64, rangeSec uint64, step uint
 	if err != nil {
 		return nil, err
 	}
+
 	defer resp.Body.Close()
 
 	buf, err := ioutil.ReadAll(resp.Body)
@@ -152,6 +156,7 @@ func (c *Client) QueryRange(expr string, end float64, rangeSec uint64, step uint
 	if err := json.Unmarshal(buf, &r); err != nil {
 		return nil, err
 	}
+
 	if r.Version != 1 {
 		return nil, fmt.Errorf("unsupported JSON format version %d", r.Version)
 	}
@@ -164,10 +169,13 @@ func (c *Client) QueryRange(expr string, end float64, rangeSec uint64, step uint
 		if err := json.Unmarshal(buf, &typedResp); err != nil {
 			return nil, err
 		}
+
 		return &typedResp, nil
+
 	default:
 		return nil, fmt.Errorf("invalid response type %s", r.Type)
 	}
+
 }
 
 // Metrics retrieves the list of available metric names via the Prometheus API.
