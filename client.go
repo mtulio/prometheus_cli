@@ -22,7 +22,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -34,11 +33,6 @@ const (
 	queryPath      = "/api/v1/query"
 	queryRangePath = "/api/v1/query_range"
 	metricsPath    = "/api/v1/metrics"
-
-	scalarType = "scalar"
-	vectorType = "vector"
-	matrixType = "matrix"
-	errorType  = "error"
 )
 
 // Client is a client for executing queries against the Prometheus API.
@@ -80,47 +74,46 @@ func (c *Client) Query(expr string) (QueryResponse, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + queryPath
 	q := u.Query()
 
-	q.Set("expr", expr)
+	q.Set("query", expr)
 	u.RawQuery = q.Encode()
 
-	resp, err := c.httpClient.Get(u.String())
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	buf, err := ioutil.ReadAll(resp.Body)
+	buf, err := SendRequestReadResponse(c, u.String())
 	if err != nil {
 		return nil, err
 	}
 
-	var r StubQueryResponse
+	var r BaseResponse
 	if err := json.Unmarshal(buf, &r); err != nil {
 		return nil, err
 	}
-	if r.Version != 1 {
-		return nil, fmt.Errorf("unsupported JSON format version %d", r.Version)
+
+	if r.Status == STATUS_ERROR {
+		return nil, fmt.Errorf(fmt.Sprintf("ErrorType: %s, Error: %s",
+			r.ErrorType, r.Error))
 	}
 
 	var typedResp QueryResponse
 
-	switch r.Type {
-	case errorType:
-		return nil, fmt.Errorf("query error: %s", r.Value.(string))
-	case scalarType:
+	switch r.RespData.ResultType {
+
+	case SCALAR_TYPE:
 		typedResp = &ScalarQueryResponse{}
-	case vectorType:
+	case STRING_TYPE:
+		typedResp = &ScalarQueryResponse{}
+	case VECTOR_TYPE:
 		typedResp = &VectorQueryResponse{}
-	case matrixType:
+	case MATRIX_TYPE:
 		typedResp = &MatrixQueryResponse{}
 	default:
-		return nil, fmt.Errorf("invalid response type %s", r.Type)
+		return nil, fmt.Errorf("invalid response type %s", r.RespData.ResultType)
 	}
 
-	if err := json.Unmarshal(buf, typedResp); err != nil {
+	if err := interfaceToStruct(r.RespData, typedResp); err != nil {
 		return nil, err
 	}
 
+	// fill the data
+	typedResp.Fill()
 	return typedResp, err
 }
 
@@ -134,48 +127,38 @@ func (c *Client) QueryRange(expr string, end float64, rangeSec uint64, step uint
 	u.Path = strings.TrimRight(u.Path, "/") + queryRangePath
 	q := u.Query()
 
-	q.Set("expr", expr)
+	q.Set("query", expr)
 	q.Set("end", fmt.Sprintf("%f", end))
 	q.Set("range", fmt.Sprintf("%d", rangeSec))
 	q.Set("step", fmt.Sprintf("%d", step))
 	u.RawQuery = q.Encode()
 
-	resp, err := c.httpClient.Get(u.String())
+	buf, err := SendRequestReadResponse(c, u.String())
 	if err != nil {
 		return nil, err
 	}
 
-	defer resp.Body.Close()
-
-	buf, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var r StubQueryResponse
+	var r BaseResponse
 	if err := json.Unmarshal(buf, &r); err != nil {
 		return nil, err
 	}
 
-	if r.Version != 1 {
-		return nil, fmt.Errorf("unsupported JSON format version %d", r.Version)
+	if r.Status == STATUS_ERROR {
+		return nil, fmt.Errorf(fmt.Sprintf("ErrorType: %s, Error: %s",
+			r.ErrorType, r.Error))
 	}
 
-	switch r.Type {
-	case errorType:
-		return nil, fmt.Errorf("query error: %s", r.Value.(string))
-	case matrixType:
-		var typedResp MatrixQueryResponse
-		if err := json.Unmarshal(buf, &typedResp); err != nil {
+	switch r.RespData.ResultType {
+	case MATRIX_TYPE:
+		typedResp := &MatrixQueryResponse{}
+		if err := interfaceToStruct(r.RespData, typedResp); err != nil {
 			return nil, err
 		}
-
-		return &typedResp, nil
+		return typedResp, nil
 
 	default:
-		return nil, fmt.Errorf("invalid response type %s", r.Type)
+		return nil, fmt.Errorf("invalid response type %s", r.RespData.ResultType)
 	}
-
 }
 
 // Metrics retrieves the list of available metric names via the Prometheus API.
@@ -186,14 +169,7 @@ func (c *Client) Metrics() ([]string, error) {
 	}
 
 	u.Path = strings.TrimRight(u.Path, "/") + metricsPath
-
-	resp, err := c.httpClient.Get(u.String())
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	buf, err := ioutil.ReadAll(resp.Body)
+	buf, err := SendRequestReadResponse(c, u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -202,5 +178,6 @@ func (c *Client) Metrics() ([]string, error) {
 	if err := json.Unmarshal(buf, &r); err != nil {
 		return nil, err
 	}
+
 	return r, nil
 }
